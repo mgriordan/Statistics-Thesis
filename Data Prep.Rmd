@@ -1,0 +1,8 @@
+
+
+```{r}
+tracks <- read.csv("//Users//maryriordan//Downloads//tracks.csv")
+
+charts <- read.csv("//Users//maryriordan//Downloads//charts.csv")
+
+```
