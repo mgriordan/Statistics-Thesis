@@ -1,8 +1,82 @@
-
-
+libraries 
 ```{r}
-tracks <- read.csv("//Users//maryriordan//Downloads//tracks.csv")
+library(sqldf)
+library(dplyr)
+library(ggplot2)
+```
+
+
+import datasets
+```{r}
+tracks_orig <- read.csv("//Users//maryriordan//Downloads//tracks.csv")
 
 charts <- read.csv("//Users//maryriordan//Downloads//charts.csv")
+colnames(charts)[5] <- "peak_rank"
+colnames(charts)[6] <- "weeks_on_board"
 
 ```
+
+
+organize billboard data 
+```{r}
+
+charts2 <- sqldf("
+      SELECT distinct song, artist, 
+      min(peak_rank) over (partition by song, artist) as peak_rank,
+      max(weeks_on_board) over (partition by song, artist) as song_weeks_on_board, 
+      min(date) over (partition by song, artist) as min_date, 
+      max(date) over (partition by song, artist) as max_date
+      from charts")
+
+song_count = sqldf("
+  select a.*, row_number() over (partition by artist) artist_song_count from
+      (select distinct artist, song
+      from charts
+      order by date) a
+      ")
+
+artist_weeks = sqldf("
+    select artist, song, max(rn) artist_weeks from
+      (select a.*, row_number() over (partition by artist) rn from
+        (select distinct date, song, artist
+        from charts
+        order by artist, date) a)
+      group by artist, song
+      ")
+
+charts_final <- sqldf("
+      select a.*, b.artist_song_count, c.artist_weeks
+      from charts2 a
+      left join song_count b
+      on a.artist = b.artist
+      and a.song = b.song
+      left join artist_weeks c
+      on a.artist = c.artist
+      and a.song = c.song")
+
+test <- charts_final[charts_final$artist=='Taylor Swift',]
+```
+
+Organize Track Data
+```{r}
+tracks_orig$artists <- gsub("\\[", "", tracks_orig$artists)
+tracks_orig$artists <- gsub("\\]", "", tracks_orig$artists)
+tracks_orig$artists <- gsub("\\'", "", tracks_orig$artists)
+```
+
+Combine datasets
+```{r}
+tracks <- sqldf("
+    select *
+    from tracks_orig a
+    left join charts_final b
+    on a.artists = b.artist
+    and a.name = b.song")
+
+tracks <- select(tracks, -c(id, id_artists))
+
+tracks_billboard <- na.omit(tracks) 
+```
+
+
+

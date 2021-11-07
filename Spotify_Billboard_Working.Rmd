@@ -1,0 +1,290 @@
+libraries 
+```{r}
+library(sqldf)
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(Hmisc)
+
+```
+
+
+import datasets
+```{r}
+tracks_orig <- read.csv("//Users//maryriordan//Downloads//tracks.csv")
+
+charts <- read.csv("//Users//maryriordan//Downloads//charts.csv")
+colnames(charts)[5] <- "peak_rank"
+colnames(charts)[6] <- "weeks_on_board"
+
+```
+
+
+organize billboard data 
+```{r}
+
+charts2 <- sqldf("
+      SELECT distinct song, artist, 
+      min(peak_rank) over (partition by song, artist) as peak_rank,
+      max(weeks_on_board) over (partition by song, artist) as song_weeks_on_board, 
+      min(date) over (partition by song, artist) as min_date, 
+      max(date) over (partition by song, artist) as max_date
+      from charts")
+
+song_count = sqldf("
+  select a.*, row_number() over (partition by artist) artist_song_count from
+      (select distinct artist, song
+      from charts
+      order by date) a
+      ")
+
+artist_weeks = sqldf("
+    select artist, song, max(rn) artist_weeks from
+      (select a.*, row_number() over (partition by artist) rn from
+        (select distinct date, song, artist
+        from charts
+        order by artist, date) a)
+      group by artist, song
+      ")
+
+charts_final <- sqldf("
+      select a.*, b.artist_song_count, c.artist_weeks
+      from charts2 a
+      left join song_count b
+      on a.artist = b.artist
+      and a.song = b.song
+      left join artist_weeks c
+      on a.artist = c.artist
+      and a.song = c.song")
+
+test <- charts_final[charts_final$artist=='Taylor Swift',]
+```
+
+Organize Track Data
+```{r}
+tracks_orig$artists <- gsub("\\[", "", tracks_orig$artists)
+tracks_orig$artists <- gsub("\\]", "", tracks_orig$artists)
+tracks_orig$artists <- gsub("\\'", "", tracks_orig$artists)
+
+tracks_orig$duration_min <- tracks_orig$duration_ms/60000
+```
+
+Combine datasets
+```{r}
+tracks <- sqldf("
+    select *
+    from tracks_orig a
+    left join charts_final b
+    on a.artists = b.artist
+    and a.name = b.song")
+
+tracks <- select(tracks, -c(id, id_artists, song, artist))
+
+tracks <- sqldf("
+    select name, popularity, duration_min, explicit, artists, release_date, danceability, 
+    energy, key, loudness, mode, speechiness, acousticness, instrumentalness, liveness, 
+    valence, tempo, time_signature, peak_rank, song_weeks_on_board, min_date, max_date, 
+    artist_song_count, artist_weeks, 
+    case when song_weeks_on_board is null then 0 else 1 end billboard_flag
+    from tracks")
+
+tracks_billboard <- na.omit(tracks) 
+
+```
+
+#EDA
+
+
+
+
+Correlation Plot
+```{r}
+M1 <- cor(tracks[,c(2:4, 7:18, 25)])
+corrplot(M1, method="circle", type = "lower", order="hclust", tl.col="black")
+
+
+#billboard tracks only
+M <- cor(tracks_billboard[,c(2:4, 7:20, 23:24)])
+corrplot(M, method="circle", type = "lower", order="hclust", tl.col="black")
+
+```
+
+```{r}
+#examine accousticness 
+
+ggplot(subset(tracks, billboard_flag==1), aes(x=release_date, y = acousticness))+
+  geom_point()
+#more acoustic billboard songs in earlier times 
+
+ggplot(tracks, aes(acousticness))+
+  geom_histogram()
+#u shaped distribution 
+
+
+
+ggplot(tracks, aes(x = acousticness, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine duration
+options(scipen=999)
+
+ggplot(tracks, aes(duration_min))+
+  geom_density()
+
+
+ggplot(tracks, aes(x = duration_min, color = factor(billboard_flag))) +
+  geom_density()+
+  xlim(0,13)
+
+```
+
+```{r}
+#examine explicit
+
+ggplot(tracks, aes(factor(explicit), fill = factor(billboard_flag)))+
+  geom_bar()
+
+ggplot(tracks_billboard, aes(factor(explicit)))+
+  geom_bar()
+
+#many more non explicit songs 
+```
+
+```{r}
+#examine artists 
+
+top_artists <- sqldf("
+    select artists, count(*) as count
+    from tracks_billboard
+    group by artists
+    order by count desc
+    limit 20")
+
+ggplot(top_artists, aes(x = reorder(artists, -count), y = count))+
+  geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  labs(x = "Artist", title = "Top 20 Artists by Weeks on Chart")
+
+```
+
+```{r}
+#examine date distribution
+
+charts$date <- as.Date(charts$date)
+
+date_freq_charts <- sqldf("select substr(date, 1, 4) year, count(*) count
+                   from charts
+                   group by substr(date, 1, 4)
+                   ")
+
+ggplot(date_freq_charts, aes(year, count))+
+  geom_bar(stat = "identity")
+
+date_freq_tracks <- sqldf("select substr(release_date, 1, 4) year, count(*) count
+                   from tracks
+                   group by substr(release_date, 1, 4)
+                   ")
+
+ggplot(date_freq_tracks, aes(year, count))+
+  geom_bar(stat = "identity")
+```
+
+```{r}
+#examine danceability
+
+
+ggplot(tracks, aes(x = danceability, color = factor(billboard_flag))) +
+  geom_density()
+
+
+```
+
+```{r}
+#examine energy
+
+
+ggplot(tracks, aes(x = energy, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine key
+
+
+ggplot(tracks, aes(x = key, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine loudness
+
+
+ggplot(tracks, aes(x = loudness, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine mode
+
+
+ggplot(tracks, aes(x = mode, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine speechiness
+
+
+ggplot(tracks, aes(x = speechiness, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine acousticness
+
+
+ggplot(tracks, aes(x = acousticness, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine instrumentalness
+
+
+ggplot(tracks, aes(x = instrumentalness, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine liveness
+
+
+ggplot(tracks, aes(x = liveness, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine valence
+
+
+ggplot(tracks, aes(x = valence, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine tempo
+
+
+ggplot(tracks, aes(x = tempo, color = factor(billboard_flag))) +
+  geom_density()
+```
+
+```{r}
+#examine time signature
+
+
+ggplot(tracks, aes(x = time_signature, color = factor(billboard_flag))) +
+  geom_density()
+```
