@@ -5,7 +5,17 @@ library(dplyr)
 library(ggplot2)
 library(corrplot)
 library(Hmisc)
-
+library(Boruta)
+library(mlbench)
+library(caret)
+library(randomForest)
+library(Rcpp)
+library(pROC)
+library(xgboost)
+library(magrittr)
+library(Matrix)
+library(ROCR)
+library(nnet)
 ```
 
 
@@ -67,6 +77,7 @@ tracks_orig$artists <- gsub("\\]", "", tracks_orig$artists)
 tracks_orig$artists <- gsub("\\'", "", tracks_orig$artists)
 
 tracks_orig$duration_min <- tracks_orig$duration_ms/60000
+
 ```
 
 Combine datasets
@@ -85,8 +96,30 @@ tracks <- sqldf("
     energy, key, loudness, mode, speechiness, acousticness, instrumentalness, liveness, 
     valence, tempo, time_signature, peak_rank, song_weeks_on_board, min_date, max_date, 
     artist_song_count, artist_weeks, 
-    case when song_weeks_on_board is null then 0 else 1 end billboard_flag
+    case when song_weeks_on_board is null then 0 else 1 end billboard_flag, 
+    substr(release_date, 1, 4) year
     from tracks")
+
+
+tracks <- sqldf("
+    select name, popularity, duration_min, explicit, artists, release_date, danceability, 
+    energy, key, loudness, mode, speechiness, acousticness, instrumentalness, liveness, 
+    valence, tempo, time_signature, peak_rank, song_weeks_on_board, min_date, max_date, 
+    artist_song_count, artist_weeks, billboard_flag, year, 
+    case when year between 1920 and 1929 then '1920s'
+         when year between 1930 and 1939 then '1930s'
+         when year between 1940 and 1949 then '1940s'
+         when year between 1950 and 1959 then '1950s'
+         when year between 1960 and 1969 then '1960s'
+         when year between 1970 and 1979 then '1970s'
+         when year between 1980 and 1989 then '1980s'
+         when year between 1990 and 1999 then '1990s'
+         when year between 2000 and 2009 then '2000s'
+         when year between 2010 and 2019 then '2010s'
+         when year between 2020 and 2029 then '2020s'
+         else 'other' end decade
+    from tracks")
+    
 
 tracks_billboard <- na.omit(tracks) 
 
@@ -109,6 +142,8 @@ corrplot(M, method="circle", type = "lower", order="hclust", tl.col="black")
 
 ```
 
+
+
 ```{r}
 #examine accousticness 
 
@@ -120,11 +155,65 @@ ggplot(tracks, aes(acousticness))+
   geom_histogram()
 #u shaped distribution 
 
-
+ggplot(tracks, aes(x = acousticness, color = factor(billboard_flag))) +
+  geom_density()+
+  facet_wrap(~decade)
 
 ggplot(tracks, aes(x = acousticness, color = factor(billboard_flag))) +
   geom_density()
 ```
+
+
+```{r}
+#bootstrap acousticness
+
+nrow(tracks[tracks$billboard_flag==0,])
+#572056
+nrow(tracks[tracks$billboard_flag==1,])
+#14616
+
+##################
+
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$acousticness
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "acousticness")
+
+
+```
+
 
 ```{r}
 #examine duration
@@ -141,6 +230,51 @@ ggplot(tracks, aes(x = duration_min, color = factor(billboard_flag))) +
 ```
 
 ```{r}
+#bootstrap duration
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$duration_min
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "duration")
+
+```
+
+
+
+
+```{r}
 #examine explicit
 
 ggplot(tracks, aes(factor(explicit), fill = factor(billboard_flag)))+
@@ -151,6 +285,49 @@ ggplot(tracks_billboard, aes(factor(explicit)))+
 
 #many more non explicit songs 
 ```
+
+```{r}
+#bootstrap explicit
+ 
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$explicit
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "explicit")
+
+```
+
+
 
 ```{r}
 #examine artists 
@@ -180,7 +357,8 @@ date_freq_charts <- sqldf("select substr(date, 1, 4) year, count(*) count
                    ")
 
 ggplot(date_freq_charts, aes(year, count))+
-  geom_bar(stat = "identity")
+  geom_bar(stat = "identity")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
 date_freq_tracks <- sqldf("select substr(release_date, 1, 4) year, count(*) count
                    from tracks
@@ -188,7 +366,8 @@ date_freq_tracks <- sqldf("select substr(release_date, 1, 4) year, count(*) coun
                    ")
 
 ggplot(date_freq_tracks, aes(year, count))+
-  geom_bar(stat = "identity")
+  geom_bar(stat = "identity")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 ```
 
 ```{r}
@@ -202,6 +381,50 @@ ggplot(tracks, aes(x = danceability, color = factor(billboard_flag))) +
 ```
 
 ```{r}
+#bootstrap danceability
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$danceability
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "danceability")
+
+```
+
+
+
+
+```{r}
 #examine energy
 
 
@@ -210,12 +433,108 @@ ggplot(tracks, aes(x = energy, color = factor(billboard_flag))) +
 ```
 
 ```{r}
+#bootstrap energy
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$energy
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "energy")
+
+```
+
+
+```{r}
 #examine key
 
 
 ggplot(tracks, aes(x = key, color = factor(billboard_flag))) +
   geom_density()
+
+
+key_freq <- sqldf("select key, count(*) count
+                   from tracks
+                   group by key
+                   ")
+
+print(key_freq)
+
+ggplot(tracks, aes(x = factor(key), color = factor(billboard_flag))) +
+  geom_bar()
 ```
+
+```{r}
+#bootstrap key
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$key
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "key")
+
+```
+
+
 
 ```{r}
 #examine loudness
@@ -226,6 +545,49 @@ ggplot(tracks, aes(x = loudness, color = factor(billboard_flag))) +
 ```
 
 ```{r}
+#bootstrap loudness
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$loudness
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "loudness")
+
+```
+
+
+
+```{r}
 #examine mode
 
 
@@ -234,19 +596,97 @@ ggplot(tracks, aes(x = mode, color = factor(billboard_flag))) +
 ```
 
 ```{r}
+#bootstrap mode
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$mode
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "mode")
+```
+
+
+
+
+
+```{r}
 #examine speechiness
 
 
 ggplot(tracks, aes(x = speechiness, color = factor(billboard_flag))) +
-  geom_density()
+  geom_density()+
+  xlim(0,0.5)
 ```
 
 ```{r}
-#examine acousticness
+#bootstrap speechiness
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$speechiness
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
 
 
-ggplot(tracks, aes(x = acousticness, color = factor(billboard_flag))) +
-  geom_density()
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "speechiness")
 ```
 
 ```{r}
@@ -258,11 +698,93 @@ ggplot(tracks, aes(x = instrumentalness, color = factor(billboard_flag))) +
 ```
 
 ```{r}
+#bootstrap instrumentalness
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$instrumentalness
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "instrumentalness")
+```
+
+
+```{r}
 #examine liveness
 
 
 ggplot(tracks, aes(x = liveness, color = factor(billboard_flag))) +
   geom_density()
+```
+
+```{r}
+#bootstrap liveness
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$liveness
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "liveness")
+
 ```
 
 ```{r}
@@ -274,11 +796,92 @@ ggplot(tracks, aes(x = valence, color = factor(billboard_flag))) +
 ```
 
 ```{r}
+#bootstrap valence
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$valence
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "valence")
+
+```
+
+```{r}
 #examine tempo
 
 
 ggplot(tracks, aes(x = tempo, color = factor(billboard_flag))) +
   geom_density()
+```
+
+```{r}
+#bootstrap tempo
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$tempo
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "tempo")
+
 ```
 
 ```{r}
@@ -288,3 +891,250 @@ ggplot(tracks, aes(x = tempo, color = factor(billboard_flag))) +
 ggplot(tracks, aes(x = time_signature, color = factor(billboard_flag))) +
   geom_density()
 ```
+
+```{r}
+#bootstrap time_signature
+
+set.seed(1211)
+n = length(tracks$billboard_flag)
+B = 500
+variable = tracks$time_signature
+
+tracks <- tracks[order(tracks$billboard_flag),] 
+
+BootstrapSamples <- matrix(sample(variable, size = n*B, replace = TRUE), nrow = n, ncol = B)
+
+
+Boot_test_0 <- rep(0, B)
+Boot_test_1 <- rep(0, B)
+
+
+for (i in 1:B){
+  Boot_test_0[i] <- (BootstrapSamples[1:572056, i])
+  Boot_test_1[i] <- (BootstrapSamples[572057:586495, i])
+}
+
+
+df0<- data.frame(matrix(unlist(Boot_test_0), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df0) <- "df0"
+df0$index <- c(1:500)
+
+df1<- data.frame(matrix(unlist(Boot_test_1), nrow=500, byrow=TRUE),stringsAsFactors=FALSE)
+colnames(df1) <- "df1"
+df0$index <- c(1:500)
+
+
+boot <- cbind(df0, df1)
+
+ggplot(boot) +
+  geom_density(aes(x = df0, color = 'not on chart'))+
+  geom_density(aes(x = df1, color = 'on chart'))+
+  labs(title = "time signature")
+
+```
+
+
+Feature Selection
+```{r}
+
+tracks2 <-  tracks[,c("billboard_flag","duration_min","energy", "key", "liveness", "valence", "tempo", "time_signature", "decade")]
+
+tracks2$billboard_flag <- as.factor(tracks2$billboard_flag)
+
+
+set.seed(1211)
+boruta <- Boruta(billboard_flag ~ ., data = tracks2, doTrace = 2)
+
+plot(boruta, las = 2)
+plotImpHistory(boruta)
+
+print(boruta)
+
+attStats(boruta)
+
+getNonRejectedFormula(boruta)
+
+getConfirmedFormula(boruta)
+```
+
+
+Random Forest
+```{r}
+str(tracks2)
+tracks2$decade <- as.factor(tracks2$decade)
+
+
+#data partition
+set.seed(1211)
+ind <- sample(2, nrow(tracks2), replace = T, prob = c(0.6, 0.4))
+train_set <- tracks2[ind == 1,]
+test_set <- tracks2[ind == 2,]
+
+#random forest model
+set.seed(123)
+
+rf_all <- randomForest(billboard_flag ~ ., data = train_set, importance = TRUE)
+rf_all$importance
+varImpPlot(rf_all, type = 2)
+
+
+
+rf_5 <- randomForest(billboard_flag ~ energy + key + liveness + valence + tempo, 
+                     data = train_set)
+
+#prediction and confusion matrix test
+p_all <- predict(rf_all, test_set)
+confusionMatrix(p_all, test_set$billboard_flag)
+
+p_5 <- predict(rf_5, test_set)
+confusionMatrix(p_5, test_set$billboard_flag)
+
+print(rf_5)
+
+plot(rf_5)
+
+#tune mtry
+t <- tuneRF(train_set[,-1], train_set[, 1], 
+       stepFactor = 1, 
+       plot = TRUE, 
+       ntreeTry = 100, 
+       trace = TRUE, 
+       improve = 0.005, 
+       doBest = TRUE)
+#lowest error at mtry = 4
+
+hist(treesize(rf_5), main = "Number of nodes for trees")
+873/(873+4920)
+```
+
+
+
+Logistic Regression
+```{r}
+
+logistic_tracks <- glm(billboard_flag ~ energy + key + liveness + valence + tempo, data = tracks, family = "binomial")
+summary(logistic_tracks)
+
+# Estimate probability
+tracks$billboard_prob <- predict(logistic_tracks, type = "response")
+
+#probability of the average 
+mean(tracks$billboard_flag)
+
+# Predict if probability is greater than average
+tracks$billboard_pred <- ifelse(tracks$billboard_prob > 0.03, 1, 0)
+
+# Calculate the model's accuracy
+mean(tracks$billboard_flag == tracks$billboard_pred)
+
+# Create a ROC curve
+ROC <- roc(tracks$billboard_flag, tracks$billboard_prob)
+
+# Plot the ROC curve
+plot(ROC, col = "blue")
+
+# Calculate the area under the curve (AUC)
+auc(ROC)
+
+
+##
+
+model <- nnet::multinom(billboard_flag ~ energy + key + liveness + valence + tempo, data = tracks)
+pred_logistic <- predict(model, tracks)
+table(pred_logistic, tracks$billboard_flag)
+
+table(tracks$billboard_flag)
+572056/(572056+14616)
+
+pred_log <- predict(model, tracks, type = 'prob')
+pred_log
+
+hist(pred_log)
+pred <- prediction(pred_log, tracks$billboard_flag)
+eval <-performance(pred, "acc")
+
+plot(eval)
+abline(h=0.98, v = 0.057)
+
+#identify best values for cutoff
+max <- which.max(slot(eval, "y.values")[[1]])
+acc <- slot(eval, "y.values")[[1]][max]
+acc
+cut <- slot(eval, "x.values")[[1]][max]
+cut
+print(c(Accuracy=acc, Cutoff = cut))
+
+#ROC Curve
+pred <- prediction(pred_log, tracks$billboard_flag)
+roc <- performance(pred, "tpr", "fpr")
+
+plot(roc, colorize = TRUE)
+abline(a=0, b=1)
+
+```
+
+eXtreme Gradient Boosting
+```{r}
+tracks2 <- tracks[,c("energy", "key", "liveness", "valence", "tempo", "billboard_flag")]
+
+str(tracks2)
+
+tracks2$billboard_flag <- as.integer(tracks2$billboard_flag)
+
+set.seed(1234)
+
+ind_boost <- sample(2, nrow(tracks2), replace = T, prob = c(0.8, 0.2))
+train_boost <- tracks2[ind_boost==1,]
+test_boost <- tracks2[ind_boost==2,]
+
+#create matrix - one-hot encoding for factor variables
+trainm <- sparse.model.matrix(billboard_flag ~ energy + key + liveness + valence + tempo, data = train_boost)
+train_label <- train_boost[, "billboard_flag"]
+train_matrix <- xgb.DMatrix(data = as.matrix(trainm), label = train_label)
+
+testm <- sparse.model.matrix(billboard_flag ~ energy + key + liveness + valence + tempo, data = test_boost)
+test_label <- test_boost[, "billboard_flag"]
+test_matrix <- xgb.DMatrix(data = as.matrix(testm), label = test_label)
+
+#parameters
+nc <- length(unique(train_label))
+xgb_params <- list("objective" = "multi:softprob", 
+                   "eval_metric" = "mlogloss", 
+                   "num_class" = nc)
+
+watchlist <- list(train_boost = train_matrix, test_boost = test_matrix)
+
+# eXtreme gradient boosting model
+bst_model <- xgb.train(params = xgb_params, data = train_matrix, 
+                       nrounds = 100, watchlist = watchlist)
+
+#train and test error plot
+e <- data.frame(bst_model$evaluation_log)
+
+plot(e$iter, e$train_boost_mlogloss, col = 'blue')
+lines(e$iter, e$test_boost_mlogloss, col = 'red')
+
+#feature importance 
+imp <- xgb.importance(colnames(train_matrix), model = bst_model)
+print(imp)
+xgb.plot.importance(imp)
+
+#prediction and confusion matrix - test 
+p <- predict(bst_model, newdata = test_matrix)
+head(p)
+pred <- matrix(p, nrow = nc, ncol = length(p)/nc) %>%
+  t() %>%
+  data.frame() %>%
+  mutate(label = test_label, max_prob = max.col(.,"last")-1)
+head(pred)
+
+table(Prediction = pred$max_prob, Actual = pred$label)
+```
+
+
+
+
+
+
+
+
