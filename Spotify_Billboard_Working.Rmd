@@ -1027,6 +1027,21 @@ tracks$billboard_pred <- ifelse(tracks$billboard_prob > 0.03, 1, 0)
 # Calculate the model's accuracy
 mean(tracks$billboard_flag == tracks$billboard_pred)
 
+tracks$accuracy <- ifelse(tracks$billboard_flag == tracks$billboard_pred, 1, 0)
+table(tracks$accuracy, tracks$decade)
+
+logistic_accuracy_decade <- tracks %>% 
+  group_by(decade) %>%
+  summarise(avg_accuracy = mean(accuracy), num_artists = n_distinct(artists))
+
+ggplot(logistic_accuracy_decade, aes(x = num_artists, y = avg_accuracy))+
+  geom_point()
+
+
+ggplot(logistic_accuracy_decade, aes(x = decade, y = avg_accuracy, fill = num_artists))+
+  geom_bar(stat = "identity")
+
+
 # Create a ROC curve
 ROC <- roc(tracks$billboard_flag, tracks$billboard_prob)
 
@@ -1037,39 +1052,10 @@ plot(ROC, col = "blue")
 auc(ROC)
 
 
-##
 
-model <- nnet::multinom(billboard_flag ~ energy + key + liveness + valence + tempo, data = tracks)
-pred_logistic <- predict(model, tracks)
-table(pred_logistic, tracks$billboard_flag)
+ggplot(tracks, aes(x = decade, fill = as.factor(billboard_flag)))+
+  geom_histogram(stat = "count")
 
-table(tracks$billboard_flag)
-572056/(572056+14616)
-
-pred_log <- predict(model, tracks, type = 'prob')
-pred_log
-
-hist(pred_log)
-pred <- prediction(pred_log, tracks$billboard_flag)
-eval <-performance(pred, "acc")
-
-plot(eval)
-abline(h=0.98, v = 0.057)
-
-#identify best values for cutoff
-max <- which.max(slot(eval, "y.values")[[1]])
-acc <- slot(eval, "y.values")[[1]][max]
-acc
-cut <- slot(eval, "x.values")[[1]][max]
-cut
-print(c(Accuracy=acc, Cutoff = cut))
-
-#ROC Curve
-pred <- prediction(pred_log, tracks$billboard_flag)
-roc <- performance(pred, "tpr", "fpr")
-
-plot(roc, colorize = TRUE)
-abline(a=0, b=1)
 
 ```
 
